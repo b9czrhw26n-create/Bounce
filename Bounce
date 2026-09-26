@@ -1,0 +1,995 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#102018">
+<title>BOUNCE! – Bobi</title>
+
+<style>
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: Arial, sans-serif;
+  background: #102018;
+  color: white;
+  user-select: none;
+}
+
+body {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+#game {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  max-width: 600px;
+  overflow: hidden;
+  background: linear-gradient(#72d9ff 0%, #baf3ff 60%, #eaffd0 100%);
+}
+
+canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+#hud {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  z-index: 5;
+  pointer-events: none;
+  text-shadow: 0 2px 3px #000;
+  font-weight: bold;
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+#powerups {
+  margin-top: 7px;
+  font-size: 13px;
+}
+
+#message {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.panel {
+  background: rgba(10,20,25,.88);
+  border: 2px solid rgba(255,255,255,.3);
+  border-radius: 20px;
+  padding: 25px;
+  width: 85%;
+  max-width: 360px;
+  box-shadow: 0 10px 40px rgba(0,0,0,.35);
+}
+
+.panel h1 {
+  margin-top: 0;
+  font-size: 42px;
+}
+
+button {
+  border: 0;
+  border-radius: 15px;
+  padding: 14px 22px;
+  font-size: 18px;
+  font-weight: bold;
+  background: #fff;
+  color: #102018;
+  margin-top: 12px;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.controls {
+  position: absolute;
+  bottom: 18px;
+  left: 15px;
+  right: 15px;
+  display: flex;
+  justify-content: space-between;
+  z-index: 8;
+}
+
+.control {
+  width: 110px;
+  height: 70px;
+  border-radius: 20px;
+  background: rgba(0,0,0,.25);
+  border: 2px solid rgba(255,255,255,.35);
+  color: white;
+  font-size: 32px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  touch-action: none;
+}
+
+.control:active {
+  background: rgba(255,255,255,.3);
+}
+
+#flash {
+  position: absolute;
+  inset: 0;
+  background: white;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 9;
+}
+</style>
+</head>
+
+<body>
+
+<div id="game">
+
+<canvas id="canvas"></canvas>
+
+<div id="hud">
+  <div class="row">
+    <div>🪙 <span id="coins">0</span></div>
+    <div>⬆️ <span id="height">0</span> m</div>
+    <div>🏆 <span id="highscore">0</span></div>
+  </div>
+  <div id="powerups"></div>
+</div>
+
+<div id="flash"></div>
+
+<div id="message">
+  <div class="panel">
+    <h1>BOUNCE!</h1>
+    <p>Hilf Bobi so hoch wie möglich zu kommen! 🚀</p>
+    <p>⬅️ ➡️ Halten zum Bewegen</p>
+    <button id="startBtn">START</button>
+  </div>
+</div>
+
+<div class="controls">
+  <div class="control" id="left">◀</div>
+  <div class="control" id="right">▶</div>
+</div>
+
+</div>
+
+<script>
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+
+const game = document.getElementById("game");
+
+const coinsEl = document.getElementById("coins");
+const heightEl = document.getElementById("height");
+const highscoreEl = document.getElementById("highscore");
+const powerupsEl = document.getElementById("powerups");
+const message = document.getElementById("message");
+const startBtn = document.getElementById("startBtn");
+const flash = document.getElementById("flash");
+
+let W, H;
+
+function resize() {
+  const rect = game.getBoundingClientRect();
+  W = canvas.width = rect.width;
+  H = canvas.height = rect.height;
+}
+
+window.addEventListener("resize", resize);
+resize();
+
+let highscore = Number(localStorage.getItem("bounceHighscore") || 0);
+highscoreEl.textContent = highscore;
+
+let running = false;
+let gameOver = false;
+
+let coins = 0;
+let height = 0;
+
+let cameraY = 0;
+let worldY = 0;
+
+let lastTime = 0;
+
+const keys = {
+  left: false,
+  right: false
+};
+
+const player = {
+  x: 0,
+  y: 0,
+  w: 42,
+  h: 42,
+  vx: 0,
+  vy: 0,
+  grounded: false
+};
+
+let platforms = [];
+let obstacles = [];
+let coinItems = [];
+let powerItems = [];
+let particles = [];
+
+let powerups = {
+  magnet: 0,
+  shield: 0,
+  turbo: 0
+};
+
+function resetGame() {
+
+  coins = 0;
+  height = 0;
+
+  cameraY = 0;
+  worldY = 0;
+
+  platforms = [];
+  obstacles = [];
+  coinItems = [];
+  powerItems = [];
+  particles = [];
+
+  powerups.magnet = 0;
+  powerups.shield = 0;
+  powerups.turbo = 0;
+
+  player.x = W / 2 - player.w / 2;
+  player.y = H - 130;
+  player.vx = 0;
+  player.vy = -720;
+  player.grounded = false;
+
+  createStartingWorld();
+
+  updateHUD();
+}
+
+function createStartingWorld() {
+
+  platforms.push({
+    x: W / 2 - 80,
+    y: H - 55,
+    w: 160,
+    h: 18
+  });
+
+  let y = H - 150;
+
+  for (let i = 0; i < 25; i++) {
+    createPlatform(y);
+    y -= 100 + Math.random() * 45;
+  }
+}
+
+function createPlatform(y) {
+
+  const width = 90 + Math.random() * 65;
+
+  let x = Math.random() * Math.max(1, W - width);
+
+  platforms.push({
+    x,
+    y,
+    w: width,
+    h: 17
+  });
+
+  // Coins
+  if (Math.random() < 0.8) {
+
+    coinItems.push({
+      x: x + width / 2,
+      y: y - 38,
+      r: 9
+    });
+  }
+
+  // Hindernis
+  if (Math.random() < 0.38) {
+
+    obstacles.push({
+      x: x + Math.random() * Math.max(1, width - 28),
+      y: y - 32,
+      w: 28,
+      h: 28
+    });
+  }
+
+  // Power-up
+  if (Math.random() < 0.18) {
+
+    const types = ["magnet", "shield", "turbo"];
+
+    powerItems.push({
+      x: x + width / 2,
+      y: y - 70,
+      type: types[Math.floor(Math.random() * types.length)],
+      r: 13
+    });
+  }
+}
+
+function extendWorld() {
+
+  let highest = Infinity;
+
+  for (const p of platforms) {
+    if (p.y < highest) highest = p.y;
+  }
+
+  while (highest > cameraY - 700) {
+    highest -= 100 + Math.random() * 65;
+    createPlatform(highest);
+  }
+}
+
+function updateHUD() {
+
+  coinsEl.textContent = coins;
+  heightEl.textContent = Math.floor(height);
+  highscoreEl.textContent = highscore;
+
+  const texts = [];
+
+  if (powerups.magnet > 0)
+    texts.push("🧲 Magnet " + powerups.magnet.toFixed(1) + "s");
+
+  if (powerups.shield > 0)
+    texts.push("🛡️ Schild " + powerups.shield.toFixed(1) + "s");
+
+  if (powerups.turbo > 0)
+    texts.push("🚀 Turbo " + powerups.turbo.toFixed(1) + "s");
+
+  powerupsEl.textContent = texts.join("   ");
+}
+
+function playSound(type) {
+
+  try {
+
+    const AudioContext =
+      window.AudioContext || window.webkitAudioContext;
+
+    if (!window.audioCtx)
+      window.audioCtx = new AudioContext();
+
+    const audio = window.audioCtx;
+
+    if (audio.state === "suspended")
+      audio.resume();
+
+    const osc = audio.createOscillator();
+    const gain = audio.createGain();
+
+    osc.connect(gain);
+    gain.connect(audio.destination);
+
+    let frequency = 400;
+    let duration = 0.1;
+
+    if (type === "jump") {
+      frequency = 500;
+      duration = 0.08;
+    }
+
+    if (type === "coin") {
+      frequency = 850;
+      duration = 0.07;
+    }
+
+    if (type === "power") {
+      frequency = 650;
+      duration = 0.2;
+    }
+
+    if (type === "hit") {
+      frequency = 120;
+      duration = 0.2;
+    }
+
+    if (type === "gameover") {
+      frequency = 90;
+      duration = 0.5;
+    }
+
+    osc.frequency.value = frequency;
+    osc.type = "square";
+
+    gain.gain.setValueAtTime(0.08, audio.currentTime);
+    gain.gain.exponentialRampToValueAtTime(
+      0.001,
+      audio.currentTime + duration
+    );
+
+    osc.start();
+    osc.stop(audio.currentTime + duration);
+
+  } catch(e) {}
+}
+
+function spawnParticles(x, y, amount = 10) {
+
+  for (let i = 0; i < amount; i++) {
+
+    particles.push({
+      x,
+      y,
+      vx: (Math.random() - .5) * 180,
+      vy: (Math.random() - .5) * 180,
+      life: .5 + Math.random() * .5,
+      maxLife: .5 + Math.random() * .5,
+      size: 3 + Math.random() * 5
+    });
+  }
+}
+
+function updateParticles(dt) {
+
+  for (let i = particles.length - 1; i >= 0; i--) {
+
+    const p = particles[i];
+
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+
+    p.vy += 300 * dt;
+    p.life -= dt;
+
+    if (p.life <= 0)
+      particles.splice(i, 1);
+  }
+}
+
+function circleRectCollision(c, r) {
+
+  const closestX = Math.max(
+    r.x,
+    Math.min(c.x, r.x + r.w)
+  );
+
+  const closestY = Math.max(
+    r.y,
+    Math.min(c.y, r.y + r.h)
+  );
+
+  const dx = c.x - closestX;
+  const dy = c.y - closestY;
+
+  return dx * dx + dy * dy < c.r * c.r;
+}
+
+function update(dt) {
+
+  if (!running) return;
+
+  // Power-up timer
+  powerups.magnet = Math.max(0, powerups.magnet - dt);
+  powerups.shield = Math.max(0, powerups.shield - dt);
+  powerups.turbo = Math.max(0, powerups.turbo - dt);
+
+  const acceleration = 1500;
+
+  if (keys.left)
+    player.vx -= acceleration * dt;
+
+  if (keys.right)
+    player.vx += acceleration * dt;
+
+  player.vx *= Math.pow(.001, dt);
+
+  player.vx = Math.max(-330, Math.min(330, player.vx));
+
+  // Gravity
+  player.vy += 1450 * dt;
+
+  if (powerups.turbo > 0)
+    player.vy += 0;
+
+  player.x += player.vx * dt;
+  player.y += player.vy * dt;
+
+  // Screen wrap
+  if (player.x < -player.w)
+    player.x = W;
+
+  if (player.x > W)
+    player.x = -player.w;
+
+  // Platform collision
+  if (player.vy > 0) {
+
+    for (const p of platforms) {
+
+      const bottom = player.y + player.h;
+
+      if (
+        bottom >= p.y &&
+        bottom <= p.y + p.h + 15 &&
+        player.x + player.w > p.x &&
+        player.x < p.x + p.w
+      ) {
+
+        player.y = p.y - player.h;
+
+        player.vy =
+          powerups.turbo > 0 ? -900 : -720;
+
+        player.grounded = true;
+
+        spawnParticles(
+          player.x + player.w / 2,
+          p.y,
+          8
+        );
+
+        playSound("jump");
+
+        break;
+      }
+    }
+  }
+
+  // Camera follows player
+  const targetCamera = player.y - H * .55;
+
+  if (targetCamera < cameraY)
+    cameraY += (targetCamera - cameraY) * 0.08;
+
+  height = Math.max(
+    height,
+    Math.floor((H - player.y + cameraY) / 10)
+  );
+
+  // Coins
+  for (let i = coinItems.length - 1; i >= 0; i--) {
+
+    const c = coinItems[i];
+
+    if (powerups.magnet > 0) {
+
+      const dx = player.x + player.w / 2 - c.x;
+      const dy = player.y + player.h / 2 - c.y;
+
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (dist < 180) {
+
+        c.x += dx * dt * 5;
+        c.y += dy * dt * 5;
+      }
+    }
+
+    if (
+      circleRectCollision(
+        c,
+        {
+          x: player.x,
+          y: player.y,
+          w: player.w,
+          h: player.h
+        }
+      )
+    ) {
+
+      coins++;
+      spawnParticles(c.x, c.y, 12);
+      playSound("coin");
+
+      coinItems.splice(i, 1);
+    }
+  }
+
+  // Power-ups
+  for (let i = powerItems.length - 1; i >= 0; i--) {
+
+    const item = powerItems[i];
+
+    if (
+      circleRectCollision(
+        item,
+        {
+          x: player.x,
+          y: player.y,
+          w: player.w,
+          h: player.h
+        }
+      )
+    ) {
+
+      powerups[item.type] = 8;
+
+      spawnParticles(item.x, item.y, 18);
+      playSound("power");
+
+      powerItems.splice(i, 1);
+    }
+  }
+
+  // Obstacles
+  for (let i = obstacles.length - 1; i >= 0; i--) {
+
+    const o = obstacles[i];
+
+    if (
+      player.x + player.w > o.x &&
+      player.x < o.x + o.w &&
+      player.y + player.h > o.y &&
+      player.y < o.y + o.h
+    ) {
+
+      if (powerups.shield > 0) {
+
+        powerups.shield = 0;
+
+        spawnParticles(o.x, o.y, 20);
+
+        flash.style.opacity = ".7";
+
+        setTimeout(() => {
+          flash.style.opacity = "0";
+        }, 100);
+
+        obstacles.splice(i, 1);
+
+        playSound("power");
+
+      } else {
+
+        endGame();
+        return;
+      }
+    }
+  }
+
+  // World
+  extendWorld();
+
+  // Alte Objekte entfernen
+  platforms = platforms.filter(p => p.y < cameraY + H + 300);
+  obstacles = obstacles.filter(o => o.y < cameraY + H + 300);
+  coinItems = coinItems.filter(c => c.y < cameraY + H + 300);
+  powerItems = powerItems.filter(p => p.y < cameraY + H + 300);
+
+  updateParticles(dt);
+
+  updateHUD();
+
+  // Falling
+  if (player.y > cameraY + H + 100) {
+    endGame();
+  }
+}
+
+function endGame() {
+
+  if (!running) return;
+
+  running = false;
+  gameOver = true;
+
+  playSound("gameover");
+
+  if (height > highscore) {
+
+    highscore = height;
+
+    localStorage.setItem(
+      "bounceHighscore",
+      highscore
+    );
+  }
+
+  highscoreEl.textContent = highscore;
+
+  message.classList.remove("hidden");
+
+  message.querySelector(".panel").innerHTML = `
+    <h1>GAME OVER</h1>
+    <p>⬆️ Höhe: <b>${Math.floor(height)} m</b></p>
+    <p>🪙 Münzen: <b>${coins}</b></p>
+    <p>🏆 Highscore: <b>${highscore} m</b></p>
+    <button id="restartBtn">NOCHMAL</button>
+  `;
+
+  document
+    .getElementById("restartBtn")
+    .addEventListener("click", startGame);
+}
+
+function startGame() {
+
+  message.classList.add("hidden");
+
+  message.querySelector(".panel").innerHTML = `
+    <h1>BOUNCE!</h1>
+    <p>Hilf Bobi so hoch wie möglich zu kommen! 🚀</p>
+    <p>⬅️ ➡️ Halten zum Bewegen</p>
+    <button id="startBtn">START</button>
+  `;
+
+  resetGame();
+
+  running = true;
+  gameOver = false;
+
+  lastTime = performance.now();
+
+  playSound("jump");
+}
+
+startBtn.addEventListener("click", startGame);
+
+// Touch controls
+function setupControl(element, direction) {
+
+  element.addEventListener("touchstart", e => {
+    e.preventDefault();
+    keys[direction] = true;
+  }, { passive: false });
+
+  element.addEventListener("touchend", e => {
+    e.preventDefault();
+    keys[direction] = false;
+  }, { passive: false });
+
+  element.addEventListener("touchcancel", () => {
+    keys[direction] = false;
+  });
+}
+
+setupControl(
+  document.getElementById("left"),
+  "left"
+);
+
+setupControl(
+  document.getElementById("right"),
+  "right"
+);
+
+// Maus/Tastatur für PC
+document.addEventListener("keydown", e => {
+
+  if (e.key === "ArrowLeft" || e.key.toLowerCase() === "a")
+    keys.left = true;
+
+  if (e.key === "ArrowRight" || e.key.toLowerCase() === "d")
+    keys.right = true;
+});
+
+document.addEventListener("keyup", e => {
+
+  if (e.key === "ArrowLeft" || e.key.toLowerCase() === "a")
+    keys.left = false;
+
+  if (e.key === "ArrowRight" || e.key.toLowerCase() === "d")
+    keys.right = false;
+});
+
+// Zeichnen
+function draw() {
+
+  ctx.clearRect(0, 0, W, H);
+
+  // Himmel
+  const gradient = ctx.createLinearGradient(0, 0, 0, H);
+
+  gradient.addColorStop(0, "#72d9ff");
+  gradient.addColorStop(1, "#eaffd0");
+
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, W, H);
+
+  // Wolken
+  ctx.fillStyle = "rgba(255,255,255,.65)";
+
+  for (let i = 0; i < 8; i++) {
+
+    const x =
+      (i * 150 + 50) % (W + 120);
+
+    const y =
+      ((i * 170 - cameraY * .15) % (H + 120) + H + 120) %
+      (H + 120) - 60;
+
+    ctx.beginPath();
+    ctx.arc(x, y, 25, 0, Math.PI * 2);
+    ctx.arc(x + 25, y - 10, 32, 0, Math.PI * 2);
+    ctx.arc(x + 55, y, 25, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Plattformen
+  for (const p of platforms) {
+
+    const y = p.y - cameraY;
+
+    if (y < -50 || y > H + 50)
+      continue;
+
+    ctx.fillStyle = "#57351f";
+    ctx.fillRect(p.x, y, p.w, p.h);
+
+    ctx.fillStyle = "#79d34a";
+    ctx.fillRect(p.x, y, p.w, 6);
+  }
+
+  // Münzen
+  for (const c of coinItems) {
+
+    const y = c.y - cameraY;
+
+    if (y < -30 || y > H + 30)
+      continue;
+
+    ctx.fillStyle = "#ffd83d";
+
+    ctx.beginPath();
+    ctx.arc(c.x, y, c.r, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#fff2a0";
+
+    ctx.beginPath();
+    ctx.arc(c.x - 3, y - 3, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Power-ups
+  for (const item of powerItems) {
+
+    const y = item.y - cameraY;
+
+    let symbol = "❓";
+
+    if (item.type === "magnet")
+      symbol = "🧲";
+
+    if (item.type === "shield")
+      symbol = "🛡️";
+
+    if (item.type === "turbo")
+      symbol = "🚀";
+
+    ctx.font = "25px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText(symbol, item.x, y);
+  }
+
+  // Hindernisse
+  for (const o of obstacles) {
+
+    const y = o.y - cameraY;
+
+    ctx.fillStyle = "#c93636";
+
+    ctx.beginPath();
+    ctx.moveTo(o.x, y + o.h);
+    ctx.lineTo(o.x + o.w / 2, y);
+    ctx.lineTo(o.x + o.w, y + o.h);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // Bobi
+  const py = player.y - cameraY;
+
+  // Körper
+  ctx.fillStyle = "#65d64a";
+
+  ctx.beginPath();
+  ctx.arc(
+    player.x + player.w / 2,
+    py + player.h / 2,
+    20,
+    0,
+    Math.PI * 2
+  );
+
+  ctx.fill();
+
+  // Augen
+  ctx.fillStyle = "white";
+
+  ctx.beginPath();
+  ctx.arc(player.x + 14, py + 14, 6, 0, Math.PI * 2);
+  ctx.arc(player.x + 28, py + 14, 6, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#172018";
+
+  ctx.beginPath();
+  ctx.arc(player.x + 14, py + 14, 3, 0, Math.PI * 2);
+  ctx.arc(player.x + 28, py + 14, 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Schild
+  if (powerups.shield > 0) {
+
+    ctx.strokeStyle = "rgba(80,180,255,.8)";
+    ctx.lineWidth = 4;
+
+    ctx.beginPath();
+
+    ctx.arc(
+      player.x + player.w / 2,
+      py + player.h / 2,
+      29,
+      0,
+      Math.PI * 2
+    );
+
+    ctx.stroke();
+  }
+
+  // Partikel
+  for (const p of particles) {
+
+    const alpha =
+      Math.max(0, p.life / p.maxLife);
+
+    ctx.globalAlpha = alpha;
+
+    ctx.fillStyle = "#fff";
+
+    ctx.fillRect(
+      p.x - p.size / 2,
+      p.y - cameraY - p.size / 2,
+      p.size,
+      p.size
+    );
+  }
+
+  ctx.globalAlpha = 1;
+}
+
+function loop(time) {
+
+  const dt =
+    Math.min(.033, (time - lastTime) / 1000 || 0);
+
+  lastTime = time;
+
+  update(dt);
+  draw();
+
+  requestAnimationFrame(loop);
+}
+
+resetGame();
+requestAnimationFrame(loop);
+</script>
+
+</body>
+</html>
